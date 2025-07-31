@@ -36,14 +36,16 @@ section .data
     suces_seek          db "seeking file                       ", NL, 0
     ; -----------------------------------------------------------------
     CREATE              db "CREATE",0
-    ; DROP                db "DROP",0
+    DROP                db "DROP",0
     TABLE               db "TABLE",0
+    ; INTO                db "INTO",0
     QUIT                db "QUIT",0
-    ; s1                  db "TABLE",0
     ; s2                  db "TAcLE",0
     ; -----------------------------------------------------------------
-    fileExistsMsg     db "Error: file already exists.", 10
-    fileExistsMsgLen  equ $ - fileExistsMsg
+    fileExistsMsg       db "Error: file already exists.", 10
+    fileExistsMsgLen    equ $ - fileExistsMsg
+    fileNotExistsMsg    db "Error: no such table to drop.", 10
+    fileNotExistsMsgLen equ $ - fileNotExistsMsg
 
 
 section .bss
@@ -101,7 +103,7 @@ createTable:
     
 ; here FILE_NAME and CONTENT and CONTENT_LEN should be extracted!
 
-; === Skip until after "TABLE " ===
+; === Skip until after "TABLE" ===
 createTable_skipToTable:
     xor         rdx, rdx ;counter
 
@@ -260,6 +262,99 @@ createTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+dropTable:
+    push        rax
+    push        rsi
+    push        rdi
+    push        rdx
+    push        rcx
+
+
+dropTable_skipToTable:
+    xor         rdx, rdx ;counter
+
+    ; moving "TABLE" into s2
+    mov         rsi, TABLE
+    mov         rdi, s2
+    mov         rcx, 6
+    rep         movsb
+
+dropTable_skipToTable_loop:
+    ; storing 5 characters of 'command' with offset rdx to check == "TABLE"?
+    lea         rsi, [command + rdx]
+    cmp         byte [rsi], 0
+    je          dropTable_extractFileName
+    mov         rdi, s1
+    mov         rcx, 5
+    rep         movsb
+    mov         byte [s1 + 5], 0
+    
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         dropTable_skipToTable_next
+    je          dropTable_extractFileName
+
+dropTable_skipToTable_next:
+    inc         rdx
+    jmp         dropTable_skipToTable_loop
+
+
+
+dropTable_extractFileName:
+    ; RDX = offset of 'T' in "TABLE"
+    ; +6 skips "TABLE" + space
+    lea         rsi, [command + rdx + 6]
+    mov         rdi, FILE_NAME
+
+.copy_fname:
+    mov         al, [rsi]
+    cmp         al, 0
+    je          .done_fname
+    mov         [rdi], al
+    inc         rsi
+    inc         rdi
+    jmp         .copy_fname
+
+.done_fname:
+    mov         byte [rdi], '.'
+    mov         byte [rdi + 1], 't'
+    mov         byte [rdi + 2], 'b'
+    mov         byte [rdi + 3], 'l'
+    mov         byte [rdi + 4], 0      ; NUL‑terminate
+    jmp         dropTable_checkAndDeleteFile
+
+dropTable_checkAndDeleteFile:
+    mov         rax, 2          ; sys_open
+    mov         rdi, FILE_NAME
+    mov         rsi, 0          ; O_RDONLY
+    syscall
+
+    cmp         rax, 0
+    jl          .file_not_found
+
+.delete_file:
+    mov         rax, 87         ; sys_unlink
+    mov         rdi, FILE_NAME
+    syscall
+    jmp         dropTable_done
+
+
+.file_not_found:
+    mov         rsi, fileNotExistsMsg
+    call        printString
+
+
+dropTable_done:
+    pop         rcx
+    pop         rdx
+    pop         rdi
+    pop         rsi
+    pop         rax
+    ret
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; Subroutine for comparing two strings in 's1' and 's2' reserved bytes.
 stringComparator:
     push        rax
@@ -339,8 +434,18 @@ director_first_word_separated2:
     jmp         Exit
 ; CHECKED ✅
 
+; DROP?
 director_first_word_separated3:
-    
+    mov         rcx, 5
+    mov         rsi, DROP
+    mov         rdi, s2
+    rep         movsb
+    call        stringComparator
+    mov         bl, 1
+    cmp         bl, [s3]
+    jne         director_first_word_separated3
+    call        dropTable
+    jmp         director_done
 
 
 director_done:
