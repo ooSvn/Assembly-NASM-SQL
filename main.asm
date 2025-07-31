@@ -40,12 +40,14 @@ section .data
     TABLE               db "TABLE",0
     ; INTO                db "INTO",0
     QUIT                db "QUIT",0
-    ; s2                  db "TAcLE",0
+    SHOW                db "SHOW",0
     ; -----------------------------------------------------------------
     fileExistsMsg       db "Error: file already exists.", 10
     fileExistsMsgLen    equ $ - fileExistsMsg
     fileNotExistsMsg    db "Error: no such table to drop.", 10
     fileNotExistsMsgLen equ $ - fileNotExistsMsg
+    dot                 db  ".", 0
+    newline             db  10, 0
 
 
 section .bss
@@ -54,7 +56,7 @@ section .bss
     s1          resb    100
     s2          resb    100
     s3          resb    1
-    s4          resb    100
+    s4          resb    1
     s5          resb    100
     s6          resb    100
     s7          resb    100
@@ -65,6 +67,7 @@ section .bss
     FILE_NAME   resb    100
     CONTENT     resb    1000
     CONTENT_LEN resq    1
+    buf         resb    1024
 
 
 section .text
@@ -353,6 +356,140 @@ dropTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+hasTblExtension:
+    push rdi
+    push rcx
+    push rdx
+
+    mov rdi, rsi       ; RDI = string ptr
+    call GetStrlen     ; RDX = strlen
+    cmp rdx, 4
+    jb .no
+
+    ; point to last 4 chars
+    lea rsi, [rsi + rdx - 4]
+    mov eax, dword [rsi]
+    cmp eax, 0x6C62742E ; ".tbl" = 0x6C ('l'), 0x62 ('b'), 0x74 ('t'), 0x2E ('.') little-endian
+    jne .no
+    mov rax, 1
+    jmp .done
+
+.no:
+    xor rax, rax
+
+.done:
+    pop rdx
+    pop rcx
+    pop rdi
+    ret
+
+
+
+showTables:
+    push rbx
+    push rsi
+    push rdi
+    push rax
+    push rcx
+    push rdx
+    push r14
+    push r13
+    push r12
+    ; --- Open current directory (".") ---
+    
+    ; syscall: getdents
+    mov     rax, 78             ; sys_getdents
+    mov     rdi, 0              ; fd = 0 (stdin), but for directory use fd from open.
+                                ; Instead, we first open "."
+    ; open(".")
+    mov     rax, 2              ; sys_open
+    lea     rdi, [rel dot]      ; pathname "."
+    xor     rsi, rsi            ; flags = O_RDONLY
+    xor     rdx, rdx            ; mode = 0
+    syscall
+    mov     r12, rax            ; save directory fd in r12
+
+.read_dir:
+    mov     rax, 78             ; sys_getdents
+    mov     rdi, r12            ; fd
+    lea     rsi, [rel buf]      ; buffer
+    mov     rdx, 4096           ; buffer size
+    syscall
+    cmp     rax, 0
+    je      .done               ; no more entries
+    mov     r13, rax            ; bytes read
+
+    mov     rbx, buf            ; current pointer in buffer
+
+.next_entry:
+    cmp     r13, 0
+    je      .read_dir           ; consumed buffer → read again
+
+    mov     dx, [rbx + 16]      ; d_reclen (offset 16 on x86-64)
+    movzx   r14, dx             ; record length
+
+    ; write d_name
+    lea     rsi, [rbx + 18]     ; d_name starts at offset 18
+    ; find length of name (up to null)
+    xor     rcx, rcx
+    mov     rdi, rsi
+
+.find_nul:
+    cmp     byte [rdi + rcx], 0
+    je      .got_len
+    inc     rcx
+    jmp     .find_nul
+
+.got_len:
+    ; rsi → d_name
+    ; rcx = length of the name
+
+    ; only proceed if rcx >= 4
+    cmp     rcx, 4
+    jb      .skip_print
+
+    ; rdx → pointer to last-4 bytes
+    lea     rdx, [rsi + rcx - 4]
+    cmp     byte [rdx],     '.'     ; '.'
+    jne     .skip_print
+    cmp     byte [rdx + 1], 't'     ; 't'
+    jne     .skip_print
+    cmp     byte [rdx + 2], 'b'     ; 'b'
+    jne     .skip_print
+    cmp     byte [rdx + 3], 'l'     ; 'l'
+    jne     .skip_print
+
+    ; -- matches ".tbl", so print it --
+    mov     rax, 1               ; sys_write
+    mov     rdi, 1               ; stdout
+    mov     rdx, rcx             ; length
+    syscall
+
+    call    newLine
+
+.skip_print:
+    ; advance to next entry
+    add     rbx, r14
+    sub     r13, r14
+    jmp     .next_entry
+
+.done:
+    ; close directory
+    mov     rax, 3              ; sys_close
+    mov     rdi, r12
+    syscall
+
+    pop r12
+    pop r13
+    pop r14
+    pop rdx
+    pop rcx
+    pop rax
+    pop rdi
+    pop rsi
+    pop rbx
+    ret
+
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; Subroutine for comparing two strings in 's1' and 's2' reserved bytes.
@@ -401,6 +538,8 @@ director_while1:
     mov         bl, [command+r8]
     cmp         bl, ' '
     je          director_first_word_separated1
+    cmp         bl, 0
+    je          director_first_word_separated1
     mov         [s1+r8], bl
     inc         r8
     jmp         director_while1
@@ -414,8 +553,7 @@ director_first_word_separated1:
     mov         rdi, s2
     rep         movsb
     call        stringComparator
-    mov         bl, 1
-    cmp         bl, [s3]
+    cmp         byte [s3], 1
     jne         director_first_word_separated2
     call        createTable
     jmp         director_done
@@ -428,10 +566,10 @@ director_first_word_separated2:
     mov         rdi, s2
     rep         movsb
     call        stringComparator
-    mov         bl, 1
-    cmp         bl, [s3]
+    cmp         byte [s3], 1
     jne         director_first_word_separated3
-    jmp         Exit
+    mov         byte [s4], 0
+    jmp         director_done
 ; CHECKED ✅
 
 ; DROP?
@@ -441,11 +579,26 @@ director_first_word_separated3:
     mov         rdi, s2
     rep         movsb
     call        stringComparator
-    mov         bl, 1
-    cmp         bl, [s3]
-    jne         director_first_word_separated3
+    cmp         byte [s3], 1
+    jne         director_first_word_separated4
     call        dropTable
     jmp         director_done
+; CHECKED ✅
+
+; SHOW TABLES?
+director_first_word_separated4:
+    mov         rcx, 5
+    mov         rsi, SHOW
+    mov         rdi, s2
+    rep         movsb
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         director_first_word_separated5
+    call        showTables
+    jmp         director_done
+; CHECKED ✅
+
+director_first_word_separated5:
 
 
 director_done:
@@ -462,8 +615,14 @@ director_done:
 
 
 _start:
+    mov         byte [s4], 1
+.app_loop:
+    cmp         byte [s4], 1
+    jne         Exit
+
     mov         rsi, dash
     call        printString
+
     ; <<TO GET ONE LINE OF COMMAND<<
     call        readOneLineCommand
     ; >>TO GET ONE LINE OF COMMAND>>
@@ -471,7 +630,7 @@ _start:
     ; <<TO PROCESS THE INPUTTED LINE OF COMMAND<<
     call        director
     ; >>TO PROCESS THE INPUTTED LINE OF COMMAND>>
-    jmp         _start
+    jmp         .app_loop
 
 
 ;     xor r14, r14
