@@ -41,6 +41,7 @@ section .data
     ; INTO                db "INTO",0
     QUIT                db "QUIT",0
     SHOW                db "SHOW",0
+    DESCRIBE            db "DESCRIBE",0
     ; -----------------------------------------------------------------
     fileExistsMsg       db "Error: file already exists.", 10
     fileExistsMsgLen    equ $ - fileExistsMsg
@@ -492,6 +493,172 @@ showTables:
 
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; describeTable:
+;     push    rbx
+;     push    rsi
+;     push    rdi
+;     push    rax
+;     push    rcx
+;     push    rdx
+
+;     mov     rdi, FILE_NAME
+;     xor     rbx, rbx
+; describeTable_extractFileName:
+;     mov     al, [command + rbx + 9]
+;     cmp     al, ' '
+;     je      .next
+;     cmp     al, 0
+;     je      .extracted
+;     mov     [rdi + rbx], al
+
+
+; .next:
+;     inc     rbx
+;     jmp     describeTable_extractFileName
+
+; .extracted:
+;     add     rdi, rbx
+;     mov     byte [rdi], '.'
+;     mov     byte [rdi + 1], 't'
+;     mov     byte [rdi + 2], 'b'
+;     mov     byte [rdi + 3], 'l'
+;     mov     byte [rdi + 4], 0
+
+; .check_file_existance:
+
+
+; .open_the_file:
+
+
+; .read_the_file:
+
+
+; .output_info:
+
+
+; .done:
+;     call    newLine
+;     pop     rdx
+;     pop     rcx
+;     pop     rax
+;     pop     rdi
+;     pop     rsi
+;     pop     rbx
+;     ret
+
+describeTable:
+    push    rbx
+    push    rsi
+    push    rdi
+    push    rax
+    push    rcx
+    push    rdx
+
+    ;— 1. Extract table name from "DESCRIBE <name>" into FILE_NAME ——
+    mov     rdi, FILE_NAME
+    xor     rbx, rbx
+.extract_loop:
+    mov     al, [command + rbx + 9]   ; start at char 9
+    cmp     al, ' '
+    je      .append_ext
+    cmp     al, 0
+    je      .append_ext
+    mov     [rdi + rbx], al
+    inc     rbx
+    jmp     .extract_loop
+
+.append_ext:
+    ; append ".tbl\0"
+    lea     rdi, [FILE_NAME + rbx]
+    mov     byte [rdi    ], '.'
+    mov     byte [rdi + 1], 't'
+    mov     byte [rdi + 2], 'b'
+    mov     byte [rdi + 3], 'l'
+    mov     byte [rdi + 4], 0
+
+    ; (optional) echo filename for debug
+    ; lea   rsi, [FILE_NAME]
+    ; call  printString
+    ; call  newLine
+
+    ;— 2. Open the file read-only ——
+    mov     rax, sys_open
+    lea     rdi, [rel FILE_NAME]
+    xor     rsi, rsi          ; O_RDONLY
+    syscall
+    cmp     rax, 0
+    js      .err_no_file
+    mov     r12, rax          ; save fd
+
+    ;— 3. Read up to 255 bytes ——
+    mov     rax, sys_read
+    mov     rdi, r12
+    lea     rsi, [rel buf]
+    mov     rdx, 255
+    syscall
+    cmp     rax, 1
+    jl      .err_read
+    mov     rcx, rax          ; bytes read
+    xor     rbx, rbx
+
+    ;— 4. Find first newline ——
+.find_nl:
+    cmp     rbx, rcx
+    jge     .err_no_nl
+    cmp     byte [buf + rbx], NL
+    je      .got_nl
+    inc     rbx
+    jmp     .find_nl
+
+.got_nl:
+    mov     byte [buf + rbx], 0  ; NUL-terminate
+
+    ;— 5. Print it ——
+    lea     rsi, [rel buf]
+    call    printString
+    call    newLine
+
+    ;— 6. Cleanup & return ——
+    mov     rax, sys_close
+    mov     rdi, r12
+    syscall
+    jmp     .done
+
+;— Error handlers ——
+.err_no_file:
+    mov     rsi, error_read
+    call    printString
+    call    newLine
+    jmp     .cleanup
+
+.err_read:
+    mov     rsi, error_read
+    call    printString
+    call    newLine
+    jmp     .cleanup
+
+.err_no_nl:
+    mov     rsi, error_print
+    call    printString
+    call    newLine
+
+.cleanup:
+    cmp     r12, 0
+    jl      .done
+    mov     rax, sys_close
+    mov     rdi, r12
+    syscall
+
+.done:
+    pop     rdx
+    pop     rcx
+    pop     rax
+    pop     rdi
+    pop     rsi
+    pop     rbx
+    ret
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; Subroutine for comparing two strings in 's1' and 's2' reserved bytes.
 stringComparator:
     push        rax
@@ -598,8 +765,17 @@ director_first_word_separated4:
     jmp         director_done
 ; CHECKED ✅
 
+; DESCRIBE?
 director_first_word_separated5:
-
+    mov         rcx, 9
+    mov         rsi, DESCRIBE
+    mov         rdi, s2
+    rep         movsb
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         director_first_word_separated5
+    call        describeTable
+    jmp         director_done
 
 director_done:
     pop         rdi
@@ -627,23 +803,14 @@ _start:
     call        readOneLineCommand
     ; >>TO GET ONE LINE OF COMMAND>>
 
+    ; mov         rsi, command
+    ; call        printString
+
     ; <<TO PROCESS THE INPUTTED LINE OF COMMAND<<
     call        director
     ; >>TO PROCESS THE INPUTTED LINE OF COMMAND>>
     jmp         .app_loop
 
-
-;     xor r14, r14
-; while:
-;     mov al, [command + r14]
-;     cmp al, 0
-;     je  Exit
-;     call putc
-;     inc r14
-;     jmp while
-    ; call        stringComparator
-    ; mov         al, [s3]
-    ; call        writeNum
     
 
 Exit:
@@ -853,8 +1020,8 @@ createFile:
     syscall
     cmp     rax, -1
     jle     createerror
-    mov     rsi, suces_create
-    call    printString
+    ; mov     rsi, suces_create
+    ; call    printString
     ret
 createerror:
     mov     rsi, error_create
@@ -866,8 +1033,8 @@ openFile:
     syscall
     cmp     rax, -1
     jle     openerror
-    mov     rsi, suces_open
-    call    printString
+    ; mov     rsi, suces_open
+    ; call    printString
     ret
 openerror:
     mov     rsi, error_open
@@ -891,8 +1058,8 @@ writeFile:
     syscall
     cmp     rax, -1
     jle     writeerror
-    mov     rsi, suces_write
-    call    printString
+    ; mov     rsi, suces_write
+    ; call    printString
     ret
 writeerror:
     mov     rsi, error_write
@@ -918,8 +1085,8 @@ closeFile:
     syscall
     cmp     rax, -1
     jle     closeerror
-    mov     rsi, suces_close
-    call    printString
+    ; mov     rsi, suces_close
+    ; call    printString
     ret
 closeerror:
     mov     rsi, error_close
