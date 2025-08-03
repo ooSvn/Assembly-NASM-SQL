@@ -6,7 +6,7 @@ section .data
     FDsrc       dq 0    ; file descriptor for source file
     FDdst       dq 0    ; file descriptor for destination file
     FDappend    dq 0    ; file descriptor for append file
-    write_data  db "Hello, Assembly!"
+    write_data  db "Hello, Assembly!",0
     write_data_len dq 16
     append_data db "Appended text!"
     append_data_len dq 14
@@ -38,11 +38,17 @@ section .data
     CREATE              db "CREATE",0
     DROP                db "DROP",0
     TABLE               db "TABLE",0
-    ; INTO                db "INTO",0
+    INSERT              db "INSERT",0
+    IN_TO               db "INTO",0
+    VALUES              db "VALUES",0
     QUIT                db "QUIT",0
     SHOW                db "SHOW",0
     DESCRIBE            db "DESCRIBE",0
     ; -----------------------------------------------------------------
+    smthWrongMsg        db "Error: there is something wrong with your command!",10
+    smthWrongMsgLen     equ $ - smthWrongMsg
+    typeMismatchMsg     db "Error: columns type are mismatched!",10
+    typeMismatchMsgLen  equ $ - typeMismatchMsg
     fileExistsMsg       db "Error: file already exists.", 10
     fileExistsMsgLen    equ $ - fileExistsMsg
     fileNotExistsMsg    db "Error: no such table to drop.", 10
@@ -58,7 +64,7 @@ section .bss
     s2          resb    100
     s3          resb    1
     s4          resb    1
-    s5          resb    100
+    s5          resb    1000
     s6          resb    100
     s7          resb    100
     s8          resb    100   
@@ -68,6 +74,8 @@ section .bss
     FILE_NAME   resb    100
     CONTENT     resb    1000
     CONTENT_LEN resq    1
+    LINE        resb    1000
+    LINE_LEN    resq    1
     buf         resb    1024
 
 
@@ -195,9 +203,11 @@ createTable_ContentExtraction:
     jmp     .copy_content
 
 .done_content:
-    mov     byte [rdi], 0      ; NUL‑terminate
+    mov     byte [rdi], 10
+    mov     byte [rdi + 1], 0      ; NUL‑terminate
     jmp     createTable_ContentLenExtraction
-
+    ; mov     rsi, rdi
+    ; call    printString
 
 ; === Compute string length of CONTENT and save in CONTENT_LEN ===
 createTable_ContentLenExtraction:
@@ -490,62 +500,8 @@ showTables:
     pop rsi
     pop rbx
     ret
-
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-; describeTable:
-;     push    rbx
-;     push    rsi
-;     push    rdi
-;     push    rax
-;     push    rcx
-;     push    rdx
-
-;     mov     rdi, FILE_NAME
-;     xor     rbx, rbx
-; describeTable_extractFileName:
-;     mov     al, [command + rbx + 9]
-;     cmp     al, ' '
-;     je      .next
-;     cmp     al, 0
-;     je      .extracted
-;     mov     [rdi + rbx], al
-
-
-; .next:
-;     inc     rbx
-;     jmp     describeTable_extractFileName
-
-; .extracted:
-;     add     rdi, rbx
-;     mov     byte [rdi], '.'
-;     mov     byte [rdi + 1], 't'
-;     mov     byte [rdi + 2], 'b'
-;     mov     byte [rdi + 3], 'l'
-;     mov     byte [rdi + 4], 0
-
-; .check_file_existance:
-
-
-; .open_the_file:
-
-
-; .read_the_file:
-
-
-; .output_info:
-
-
-; .done:
-;     call    newLine
-;     pop     rdx
-;     pop     rcx
-;     pop     rax
-;     pop     rdi
-;     pop     rsi
-;     pop     rbx
-;     ret
-
 describeTable:
     push    rbx
     push    rsi
@@ -656,6 +612,228 @@ describeTable:
     pop     rdi
     pop     rsi
     pop     rbx
+    ret
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+insertIntoTable:
+    push        rbx
+    push        rsi
+    push        rdi
+    push        rax
+    push        rcx
+    push        rdx
+    push        r14
+    push        r13
+    push        r12
+
+    mov         rsi, IN_TO
+    mov         rdi, s2
+    mov         rcx, 5
+    rep         movsb
+    xor         rdx, rdx
+
+insertIntoTable_skipINTO:
+    lea         rsi, [command + rdx]
+    cmp         byte [rsi], 0
+    je          insertIntoTable_raiseError
+    mov         rdi, s1
+    mov         rcx, 4
+    rep         movsb
+    mov         byte [s1 + 4], 0
+    
+    call        stringComparator
+    cmp         byte [s3], 1
+    je          insertIntoTable_getFileName
+
+.next:
+    inc         rdx
+    jmp         insertIntoTable_skipINTO
+
+
+
+
+
+insertIntoTable_getFileName:
+    lea     rsi, [command + rdx + 5]
+    mov     rdi, FILE_NAME
+
+.copy_fname:
+    mov     al, [rsi]
+    cmp     al, ' '
+    je      .done_fname
+    cmp     al, '('
+    je      .done_fname
+    cmp     al, 0
+    je      .done_fname
+    mov     [rdi], al
+    inc     rsi
+    inc     rdi
+    jmp     .copy_fname
+
+.done_fname:
+    mov     byte [rdi], '.'
+    mov     byte [rdi + 1], 't'
+    mov     byte [rdi + 2], 'b'
+    mov     byte [rdi + 3], 'l'
+    mov     byte [rdi + 4], 0      ; NUL‑terminate
+
+
+
+
+
+insertIntoTable_checkFileExists:
+    mov     rax, sys_open
+    lea     rdi, [rel FILE_NAME]
+    xor     rsi, rsi                ; O_RDONLY
+    syscall
+    cmp     rax, 0
+    js      insertIntoTable_done    ; check for error
+    mov     [FDdst], rax            ; save file descriptor
+
+
+
+
+
+insertIntoTable_skipVALUES:
+    mov         rsi, VALUES
+    mov         rdi, s2
+    mov         rcx, 7
+    rep         movsb
+    xor         rdx, rdx
+
+.looop:
+    lea         rsi, [command + rdx]
+    cmp         byte [rsi], 0
+    je          insertIntoTable_raiseError
+    mov         rdi, s1
+    mov         rcx, 6
+    rep         movsb
+    mov         byte [s1 + 6], 0
+    
+    call        stringComparator
+    cmp         byte [s3], 1
+    je          insertIntoTable_extractValues
+
+.next:
+    inc         rdx
+    jmp         .looop
+
+
+
+
+insertIntoTable_extractValues:
+    lea     rsi, [command]
+
+.find_paren:
+    mov     al, [rsi]
+    cmp     al, '('
+    jne     .inc_paren
+    jmp     .start_copy
+.inc_paren:
+    inc     rsi
+    jmp     .find_paren
+
+.start_copy:
+    inc     rsi                 ; skip '('
+    mov     rdi, CONTENT
+
+.copy_content:
+    mov     al, [rsi]
+    cmp     al, ')'
+    je      .done_content
+    cmp     al, 0
+    je      .done_content
+    mov     [rdi], al
+    inc     rsi
+    inc     rdi
+    jmp     .copy_content
+
+.done_content:
+    mov     byte [rdi], 10
+    mov     byte [rdi + 1], 0      ; NUL‑terminate
+
+
+
+
+
+insertIntoTable_ContentLenExtraction:
+    mov     rsi, CONTENT
+    xor     rcx, rcx           ; counter = 0
+
+.len_loop:
+    mov     al, [rsi + rcx]
+    cmp     al, 0
+    je      .store_len
+    inc     rcx
+    jmp     .len_loop
+
+.store_len:
+    mov     [CONTENT_LEN], rcx
+
+
+
+insertIntoTable_evaluateValues:
+    ; reading the file into buf
+    mov     rdi, [FDdst]
+    mov     rsi, buf
+    mov     rdx, 1024
+    mov     rax, 0      ; sys_read
+    syscall 
+
+    lea     rsi, [buf]
+    xor     rcx, rcx
+
+.find_nl:
+    mov     al, [rsi + rcx]
+    cmp     al, 0xA
+    je      .newline_found
+    cmp     al, 0
+    je      .newline_found            ; reached end without newline
+    inc     rcx
+    jmp     .find_nl
+
+.newline_found:
+    mov     byte [rsi + rcx], 0   ; null-terminate the first line
+    call    check_compatibilty
+    cmp     byte [s3], 1
+    jne     insertIntoTable_closeFile
+
+
+insertIntoTable_appendToFile:
+    mov     rax, 2              ; sys_open
+    mov     rdi, FILE_NAME      ; pointer to file name
+    mov     rsi, 1025           ; O_WRONLY | O_APPEND (1 + 1024)
+    mov     rdx, 0o644          ; mode if O_CREAT is used (rw-r--r--)
+    syscall
+    cmp     rax, 0
+    js      insertIntoTable_done          ; check for error
+    mov     [FDdst], rax        ; save file descriptor
+    
+    mov     rdi, [FDdst]        ; file descriptor
+    lea     rsi, [CONTENT]      ; data buffer
+    mov     rdx, [CONTENT_LEN]  ; length of data
+    call    writeFile           ; your own writeFile subroutine
+
+
+insertIntoTable_closeFile:
+    ; close file
+    mov     rdi, [FDdst]
+    call    closeFile
+    jmp     insertIntoTable_done
+
+insertIntoTable_raiseError:
+    call        raiseError_badCommand
+
+insertIntoTable_done:
+    pop         r12
+    pop         r13
+    pop         r14
+    pop         rdx
+    pop         rcx
+    pop         rax
+    pop         rdi
+    pop         rsi
+    pop         rbx
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
@@ -773,9 +951,25 @@ director_first_word_separated5:
     rep         movsb
     call        stringComparator
     cmp         byte [s3], 1
-    jne         director_first_word_separated5
+    jne         director_first_word_separated6
     call        describeTable
     jmp         director_done
+; CHECKED ✅
+
+; INSERT?
+director_first_word_separated6:
+    mov         rcx, 7
+    mov         rsi, INSERT
+    mov         rdi, s2
+    rep         movsb
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         director_first_word_separated6
+    call        insertIntoTable
+    jmp         director_done
+
+director_first_word_raiseError:
+    call        raiseError_badCommand
 
 director_done:
     pop         rdi
@@ -786,7 +980,215 @@ director_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+checkIf_s5_isInt:
+    push        r8
 
+    xor         r8, r8
+.looop:
+    mov         al, [s5 + r8]
+    cmp         al, 0
+    je          .is_int
+    cmp         al, 48
+    jl          .not_int
+    cmp         al, 57
+    jge         .not_int
+
+.next:
+    inc         r8
+    jmp         .looop
+
+.not_int:
+    mov         byte [s3], 0
+    jmp         .done
+
+.is_int:
+    mov         byte [s3], 1
+    jmp         .done
+
+.done:
+    pop         r8
+    ret
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+checkIf_s5_isStr:
+    push        r8
+
+    cmp         byte [s5], 0x22
+    jne         .not_str
+
+    xor         r8, r8
+.looop:
+    mov         al, [s5 + r8]
+    cmp         al, 0
+    je          .found_end
+
+.next:
+    inc         r8
+    jmp         .looop
+
+.found_end:
+    dec         r8
+    cmp         byte [s5 + r8], 0x22
+    jne         .not_str
+
+.is_str:
+    mov         byte [s3], 1
+    jmp         .done
+
+.not_str:
+    mov         byte [s3], 0
+    jmp         .done
+
+.done:
+    pop         r8
+    ret
+
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+check_compatibilty:
+    push    rsi
+    push    rdi
+    push    rbx
+    push    rcx
+    push    rdx
+    push    r8
+    push    r9
+
+    lea     rsi, [buf]           ; schema ptr
+    lea     rdi, [CONTENT]       ; values ptr
+
+.next_column:
+    ; End of schema?
+    mov     al, [rsi]
+    cmp     al, 0
+    je      .success
+
+    ; skip column name up to ':'
+.skip_colname:
+    mov     al, [rsi]
+    cmp     al, 0
+    je      .success
+    cmp     al, ':'
+    je      .got_type
+    inc     rsi
+    jmp     .skip_colname
+
+.got_type:
+    inc     rsi                 ; now rsi points to first char of type
+    mov     bl, [rsi]           ; save type char
+    inc     rsi                 ; move past type char
+
+    ; skip ',' after type
+.skip_typecomma:
+    mov     al, [rsi]
+    cmp     al, ','
+    jne     .skip_typecomma_check_end
+    inc     rsi
+
+.skip_typecomma_check_end:
+    ; rsi now ready for next column
+
+.get_next_value:
+    ; skip leading commas or spaces
+.skip_val_space:
+    mov     al, [rdi]
+    cmp     al, ' '
+    je      .skip_val_advance
+    cmp     al, ','
+    je      .skip_val_advance
+    jmp     .copy_value
+
+.skip_val_advance:
+    inc     rdi
+    jmp     .skip_val_space
+
+.copy_value:
+    xor     rcx, rcx
+.copy_loop:
+    mov     al, [rdi + rcx]
+    cmp     al, ','
+    je      .value_done
+    cmp     al, 10
+    je      .value_done
+    cmp     al, 0
+    je      .value_done
+    mov     [s5 + rcx], al
+    inc     rcx
+    jmp     .copy_loop
+
+.value_done:
+    mov     byte [s5 + rcx], 0
+    add     rdi, rcx
+    cmp     byte [rdi], ','
+    je      .skip_comma
+    jmp     .check_type
+
+.skip_comma:
+    inc     rdi
+
+.check_type:
+    cmp     bl, 'i'
+    je      .check_int
+    cmp     bl, 's'
+    je      .check_str
+    jmp     .fail
+
+.check_int:
+    call    checkIf_s5_isInt
+    cmp     byte [s3], 1
+    jne     .fail
+    jmp     .next_column
+
+.check_str:
+    call    checkIf_s5_isStr
+    cmp     byte [s3], 1
+    jne     .fail
+    jmp     .next_column
+
+.fail:
+    mov     byte [s3], 0
+    ; Print error message
+    mov     rax, 1          ; sys_write
+    mov     rdi, 1          ; stdout
+    mov     rsi, typeMismatchMsg
+    mov     rdx, typeMismatchMsgLen
+    syscall
+    jmp     .done
+
+.success:
+    mov     byte [s3], 1
+
+.done:
+    pop     r9
+    pop     r8
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rdi
+    pop     rsi
+    ret
+
+
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+raiseError_badCommand:
+    push    rax
+    push    rdi
+    push    rsi
+    push    rdx
+
+    mov     rax, 1          ; sys_write
+    mov     rdi, 1          ; stdout
+    mov     rsi, smthWrongMsg
+    mov     rdx, smthWrongMsgLen
+    syscall
+
+    pop     rdx
+    pop     rsi
+    pop     rdi
+    pop     rax
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
 
 
