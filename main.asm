@@ -1,4 +1,6 @@
 section .data
+    comma       db ",",0
+    newline     db 10,0
     src_file    db "srcfile.txt", 0
     dst_file    db "dstfile.txt", 0
     append_file db "dstfile.txt", 0
@@ -44,6 +46,10 @@ section .data
     QUIT                db "QUIT",0
     SHOW                db "SHOW",0
     DESCRIBE            db "DESCRIBE",0
+    SELECT              db "SELECT",0
+    FROM                db "FROM",0
+    WHERE               db "WHERE",0
+    DELETE              db "DELETE",0
     ; -----------------------------------------------------------------
     smthWrongMsg        db "Error: there is something wrong with your command!",10
     smthWrongMsgLen     equ $ - smthWrongMsg
@@ -53,12 +59,20 @@ section .data
     fileExistsMsgLen    equ $ - fileExistsMsg
     fileNotExistsMsg    db "Error: no such table to drop.", 10
     fileNotExistsMsgLen equ $ - fileNotExistsMsg
+    fileNotFoundMsg     db "Error: file not found!",10
+    fileNotFoundMsgLen  equ $ - fileNotFoundMsg
     dot                 db  ".", 0
-    newline             db  10, 0
 
 
 section .bss
-    buffer      resb    bufferlen
+    where_index resq    1           ; or resb 1 for 1-byte
+    buf         resb    4096        ; read entire file into here
+    buf_pointer resq    1
+    HEADER      resb    4096
+    HEADER_LEN  resq    1
+    COLUMNS     resb    1000  
+    CONDITION   resb    1000  
+    buffer      resb    4096
     command     resb    100          ;to store a line of command
     s1          resb    100
     s2          resb    100
@@ -69,14 +83,13 @@ section .bss
     s7          resb    100
     s8          resb    100   
     s9          resb    100
-    s10         resb    100
+    s10         resb    1
     ; -----------------------------------------------------------------
     FILE_NAME   resb    100
     CONTENT     resb    1000
     CONTENT_LEN resq    1
     LINE        resb    1000
     LINE_LEN    resq    1
-    buf         resb    1024
 
 
 section .text
@@ -693,7 +706,6 @@ insertIntoTable_checkFileExists:
 
 
 
-
 insertIntoTable_skipVALUES:
     mov         rsi, VALUES
     mov         rdi, s2
@@ -837,6 +849,681 @@ insertIntoTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+selectCommandHandler:
+    push        rbx
+    push        rsi
+    push        rdi
+    push        rax
+    push        rcx
+    push        rdx
+    push        r14
+    push        r13
+    push        r12
+
+selectCommandHandler_extractColumns:
+    ; checking whether there is ' ' after SELECT
+    mov         r12, 6
+    cmp         byte [command + r12], ' '
+    jne         selectCommandHandler_raiseError
+    inc         r12
+    xor         r13, r13
+.looop:
+    mov         al, [command + r12]
+    cmp         al, 0
+    je          selectCommandHandler_raiseError
+    cmp         al, ' '
+    je          .columns_end_found
+    mov         byte [COLUMNS + r13], al
+    inc         r13
+.next:
+    inc         r12
+    jmp         .looop
+.columns_end_found:
+    mov         byte [COLUMNS + r13], 0
+; OKAY TILL HERE
+
+selectCommandHandler_checkIf_FROM_isThere:
+    inc         r12
+    lea         rsi, [command + r12]
+    lea         rdi, [s1]
+    mov         rcx, 4
+    rep         movsb
+    mov         byte [s1 + 5], 0
+
+    lea         rsi, [FROM]
+    lea         rdi, [s2]
+    mov         rcx, 5
+    rep         movsb
+
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         selectCommandHandler_raiseError
+
+
+selectCommandHandler_extractFileName:
+    ; checking whether there is ' ' after FROM
+    add         r12, 4
+    cmp         byte [command + r12], ' '
+    jne         selectCommandHandler_raiseError
+    inc         r12
+    xor         r13,r13
+
+.looop:
+    mov         al,[command + r12]
+    cmp         al, ' '
+    je          .found_name
+    cmp         al, 0
+    je          .found_name
+    mov         byte [FILE_NAME + r13], al
+    inc         r13
+.next:
+    inc         r12
+    jmp         .looop
+
+.found_name:
+    mov         byte [FILE_NAME + r13], '.'
+    mov         byte [FILE_NAME + r13 + 1], 't'
+    mov         byte [FILE_NAME + r13 + 2], 'b'
+    mov         byte [FILE_NAME + r13 + 3], 'l'
+    mov         byte [FILE_NAME + r13 + 4], 0
+
+
+; selectCommandHandler_checkIf_WHERE_isThere:
+;     cmp         al, 0
+;     ; je          .no_where
+
+
+
+; selectCommandHandler_loopOverRecords:
+
+
+
+selectCommandHandler_raiseError:
+    call        raiseError_badCommand
+
+selectCommandHandler_done:
+    pop         r12
+    pop         r13
+    pop         r14
+    pop         rdx
+    pop         rcx
+    pop         rax
+    pop         rdi
+    pop         rsi
+    pop         rbx
+    ret
+
+
+condition_checker:
+    
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+deleteFromTable:
+    push        rbx
+    push        rsi
+    push        rdi
+    push        rax
+    push        rcx
+    push        rdx
+    push        r14
+    push        r13
+    push        r12
+
+deleteFromTable_skipFROM:
+    mov         r12, 6
+    cmp         byte [command + r12], ' '
+    jne         deleteFromTable_raiseError
+    
+    mov         rcx, 5
+    mov         rsi, FROM
+    mov         rdi, s2
+    rep         movsb
+
+    xor         rdx, rdx
+.looop:
+    lea         rsi, [command + rdx]
+    cmp         byte [rsi], 0
+    je          deleteFromTable_raiseError
+    mov         rdi, s1
+    mov         rcx, 4
+    rep         movsb
+    mov         byte [s1 + 4], 0
+    
+    call        stringComparator
+    cmp         byte [s3], 1
+    je          deleteFromTable_extractFileName
+.next:
+    inc         rdx
+    jmp         .looop
+
+
+deleteFromTable_extractFileName:
+    mov         r12, rdx
+    add         r12, 4
+    cmp         byte [command + r12], ' '
+    jne         selectCommandHandler_raiseError
+    inc         r12
+    xor         r13,r13
+.looop:
+    mov         al,[command + r12]
+    cmp         al, ' '
+    je          .found_name
+    cmp         al, 0
+    je          .found_name
+    mov         byte [FILE_NAME + r13], al
+    inc         r13
+.next:
+    inc         r12
+    jmp         .looop
+.found_name:
+    mov         byte [FILE_NAME + r13], '.'
+    mov         byte [FILE_NAME + r13 + 1], 't'
+    mov         byte [FILE_NAME + r13 + 2], 'b'
+    mov         byte [FILE_NAME + r13 + 3], 'l'
+    mov         byte [FILE_NAME + r13 + 4], 0
+
+
+deleteFromTable_skipWHERE:
+    cmp         byte [command + r12], ' '
+    jne         deleteFromTable_raiseError
+    
+    mov         rcx, 6
+    mov         rsi, WHERE
+    mov         rdi, s2
+    rep         movsb
+
+    xor         rdx, rdx
+.looop:
+    lea         rsi, [command + rdx]
+    cmp         byte [rsi], 0
+    je          deleteFromTable_raiseError
+    mov         rdi, s1
+    mov         rcx, 5
+    rep         movsb
+    mov         byte [s1 + 5], 0
+    
+    call        stringComparator
+    cmp         byte [s3], 1
+    je          deleteFromTable_extractConditions
+.next:
+    inc         rdx
+    jmp         .looop
+
+
+deleteFromTable_extractConditions:
+    xchg        r12, rdx
+    add         r12, 5
+    cmp         byte [command + r12], ' '
+    jne         deleteFromTable_raiseError
+    
+    inc         r12
+    xor         r13,r13
+.looop:
+    mov         al,[command + r12]
+    cmp         al, ' '
+    je          deleteFromTable_raiseError
+    cmp         al, 0
+    je          .found_conditions
+    mov         byte [CONDITION + r13], al
+    inc         r13
+.next:
+    inc         r12
+    jmp         .looop
+.found_conditions:
+
+
+
+deleteFromTable_readFile:
+    mov     rax, sys_open
+    lea     rdi, [rel FILE_NAME]
+    xor     rsi, rsi                ; O_RDONLY
+    syscall
+    cmp     rax, 0
+    js      deleteFromTable_raiseError    ; check for error
+    mov     [FDdst], rax            ; save file descriptor
+
+; reading the file into buf
+    mov     rdi, [FDdst]
+    mov     rsi, buf
+    mov     rdx, 1024
+    mov     rax, 0      ; sys_read
+    syscall 
+
+    mov     rdi, [FDdst]
+    call    closeFile
+
+
+deleteFromTable_FirstLineOfFile:
+    ; READ FIRST LINE OF FILE
+    xor         r14,r14
+.looop:
+    mov         al, [buf + r14]
+    cmp         al, NL
+    je          .done
+    mov         byte [HEADER + r14], al
+.next:
+    inc         r14
+    jmp         .looop
+.done:
+    mov         byte [HEADER + r14], NL
+    inc         r14
+    mov         byte [HEADER + r14], 0
+    mov         [HEADER_LEN], r14
+    lea         r13, [buf + r14]
+    mov         [buf_pointer], r13
+
+
+    ; OPEN FILE
+.open_file_and_write_header:
+    mov     rax, 2                                  ; syscall: sys_open
+    lea     rdi, [rel FILE_NAME]                    ; pointer to filename
+    mov     rsi, 577                                ; O_WRONLY | O_TRUNC | O_CREAT (1 + 512 + 64)
+    mov     rdx, 0o644                              ; file permissions (rw-r--r--)
+    syscall
+    cmp     rax, 0
+    js      deleteFromTable_fileNotFound             ; handle error
+    mov     [FDdst], rax  ; save FD
+
+
+    ; WRITE HEADER
+.write_header_on_file:
+
+    mov     rax, 1                  ; syscall: sys_write
+    mov     rdi, [FDdst]            ; file descriptor
+    lea     rsi, [rel HEADER]       ; pointer to data
+    mov     rdx, [HEADER_LEN]       ; length of data
+    syscall
+
+
+deleteFromTable_checkRecords:
+    ; LOOP <<
+    ; COPY A RECORD ON <LINE>
+    xor     r14, r14
+    mov     r13, [buf_pointer]
+.copy_line:
+    mov     al, [r13 + r14]
+    cmp     al, NL
+    je      .lineEnd
+    cmp     al, 0
+    je      .done
+    mov     byte [LINE + r14], al
+    inc     r14
+    jmp     .copy_line
+.lineEnd:
+    mov     byte [LINE + r14], NL
+    inc     r14
+    mov     [LINE_LEN], r14
+    ; CALL ROUTINE FOR CHECKING THE RECORD
+    call    check_condition
+    cmp     byte [s3], 0
+    jne     .nextLine
+
+    mov     rax, 1                  ; syscall: sys_write
+    mov     rdi, [FDdst]            ; file descriptor
+    lea     rsi, [rel LINE]         ; pointer to data
+    mov     rdx, [LINE_LEN]         ; length of data
+    syscall
+
+.nextLine:
+    add     r13, r14
+    xor     r14, r14
+    jmp     .copy_line
+.done:
+
+
+    ; CLOSE FILE
+.close_file:
+    mov     rax, 3            ; syscall: sys_close
+    mov     rdi, [FDdst]      ; same FD
+    syscall
+    ; 
+    jmp deleteFromTable_done
+
+
+
+
+deleteFromTable_raiseError:
+    call        raiseError_badCommand
+    jmp         deleteFromTable_done
+
+deleteFromTable_fileNotFound:
+    call        raiseError_fileNotFound
+    jmp         deleteFromTable_done
+
+
+deleteFromTable_done:
+    pop         r12
+    pop         r13
+    pop         r14
+    pop         rdx
+    pop         rcx
+    pop         rax
+    pop         rdi
+    pop         rsi
+    pop         rbx
+    ret
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Dastoor
+; INSERT INTO students VALUES ("amir",32)
+; INSERT INTO students VALUES ("ali",24)
+; INSERT INTO students VALUES ("babi",38)
+; DELETE FROM students WHERE age<30
+
+
+; Subroutine: check_condition
+; Inputs:
+;   CONDITION (buffer) contains NUL-terminated string: <col><op><value>
+;   HEADER   (buffer) contains NUL-terminated "name:type,..."
+;   LINE     (buffer) contains NUL-terminated data record "val1,val2,..."
+; Output:
+;   byte [s3] = 1 if condition holds, 0 otherwise
+;
+; Uses scratch buffers:
+;   s5 for column name
+;   s6 for condition value string
+;   s7 for field value string
+;
+check_condition:
+    ; Save registers
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+
+    ; --- 1. Parse CONDITION into s5 (col), s4 (op), s6 (value) ---
+    xor     rbx, rbx        ; offset in CONDITION
+    lea     rsi, [rel CONDITION]
+    lea     rdi, [rel s5]
+.parse_cond:
+    mov     al, [rsi+rbx]
+    cmp     al, '='
+    je      .got_op
+    cmp     al, '>'
+    je      .got_op
+    cmp     al, '<'
+    je      .got_op
+    mov     [rdi+rbx], al
+    inc     rbx
+    jmp     .parse_cond
+.got_op:
+    mov     byte [s4], al   ; store operator
+    mov     byte [s5+rbx], 0 ; terminate column name
+    ; copy remainder to s6
+    lea     rdi, [rel s6]
+    xor     rcx, rcx        ; count
+    inc     rbx
+.copy_val:
+    mov     al, [rsi+rbx]
+    cmp     al, NL
+    je      .val_done
+    cmp     al, 0
+    je      .val_done
+    mov     [rdi+rcx], al
+    inc     rcx
+    inc     rbx
+    jmp     .copy_val
+.val_done:
+    mov     byte [s6+rcx], 0 ; terminate condition value
+
+        ; --- 2. Find column index by comparing s5 to HEADER names ---
+    xor     rcx, rcx         
+    xor     rdx, rdx        ; field index
+    lea     rsi, [rel HEADER]
+.find_field:
+    ; extract next header name into s2 for compare
+    xor     rbx, rbx
+    lea     rdi, [rel s2]
+.copy_hdr:
+    mov     al, [rsi+rcx]
+    cmp     al, ':'
+    je      .hdr_type_sep
+    mov     [rdi+rbx], al
+    inc     rcx
+    inc     rbx
+    jmp     .copy_hdr
+.hdr_type_sep:
+    mov     byte [rdi+rbx], 0 ; terminate at ':'
+.compare_hdr:
+    ; push    rsi
+    ; lea     rsi, [s2]
+    ; call    printString
+    ; pop     rsi
+    ; copy s5 into s1 for comparator
+    push    rsi
+    lea     rdi, [rel s1]
+    mov     rsi, s5
+    call    strcpy_zero
+    pop     rsi
+    ; copy s2 into s2-buffer (already zero-terminated)
+    ; compare
+    ; push    rsi
+    ; lea     rsi, [s1]
+    ; call    printString
+    ; lea     rsi, [s2]
+    ; call    printString
+    ; pop     rsi
+    call    stringComparator
+    cmp     byte [s3], 1
+    je      .got_index
+    ; skip to next header
+
+.skip_to_next_header:
+    inc     rbx
+    mov     al, [rsi+rcx]
+    cmp     al, ','
+    je      .loooop_done
+    cmp     al, 0
+    je      .hdr_done
+    inc     rcx
+    jmp     .skip_to_next_header
+.loooop_done:
+    inc     rcx
+    inc     rdx
+    jmp     .find_field
+
+.hdr_done:
+    ; no more headers
+    jmp .done
+.got_index:
+    ; ; mov     [where_index], rcx  ; save matched index
+
+    ; mov     rsi, LINE
+    ; call    printString
+    ; call    newLine
+    ; mov     rax, rdx
+    ; call    writeNum
+    ; call    newLine
+
+
+    ; --- 3. Extract corresponding field from LINE into s7 --- from LINE into s7 ---
+    xor     rbx, rbx        ; row field index
+    lea     rdi, [s7]
+    lea     rsi, [LINE]
+    xor     r9, r9
+.extract_val:
+    cmp     rbx, rdx        ; reached desired field?
+    je      .copy_field
+    mov     al, [rsi + r9]
+    cmp     al, ','
+    je      .next_row_field
+    cmp     al, NL
+    je      .copy_field
+    inc     r9
+    jmp     .extract_val
+.next_row_field:
+    inc     r9
+    inc     rbx
+    jmp     .extract_val
+.copy_field:
+    xor     r8, r8          ; offset counter
+.copy_loop:
+    mov     al, [rsi + r9]
+    cmp     al, ','
+    je      .field_done
+    cmp     al, NL
+    je      .field_done
+    mov     [rdi + r8], al
+    inc     r8
+    inc     r9
+    jmp     .copy_loop
+.field_done:
+    mov     byte [s7+r8], 0 ; terminate field string
+    ; mov     rsi, s7
+    ; call    printString
+
+
+;     ; mov     rsi, s7
+;     ; call    printString
+
+
+    ; --- 4. Determine type from HEADER (char after colon) ---
+    lea     rsi, [rel HEADER]
+    mov     rbx, rdx        ; target field idx
+.find_type:
+    mov     al, [rsi]
+    ; call    putc
+    cmp     al, ':'
+    jne     .inc_type
+    cmp     rbx, 0
+    jne     .inc_type
+    mov     al, [rsi+1]
+    mov     [s8], al        ; store type char
+    jmp     .eval_cond
+.inc_type:
+    inc     rsi
+    cmp     byte [rsi], ','
+    jne     .find_type
+    inc     rsi
+    dec     rbx
+    jnz     .find_type
+    jmp     .find_type
+
+; heree
+;     ; --- 5. Evaluate condition ---
+.eval_cond:
+    cmp     byte [s8], 'i'
+    je      .eval_int
+    ; string compare for '=' only (string types)
+    ; copy field value s7 -> s1
+    lea     rsi, [rel s7]
+    lea     rdi, [rel s1]
+    call    strcpy_zero
+    ; copy condition value s6 -> s2
+    lea     rsi, [rel s6]
+    lea     rdi, [rel s2]
+    call    strcpy_zero
+    ; compare s1 and s2
+    call    stringComparator
+    ; result in s3 already
+    jmp     .done
+
+.eval_int:
+    ; mov     rsi, s7
+    ; call    printString
+    ; call    newLine
+
+    mov     rdi, s7
+    call    str2int
+    mov     r9, rax
+    ; call    writeNum
+
+    mov     rdi, s6
+    call    str2int
+    mov     r10, rax
+    ; call    writeNum
+
+    mov     al, [s4]
+    cmp     al, '='
+    je      .cmp_eq
+    cmp     al, '>'
+    je      .cmp_gt
+    cmp     al, '<'
+    je      .cmp_lt
+    jmp     .done
+.cmp_eq:
+    cmp     r9, r10
+    sete    al
+    mov     [s3], al
+    jmp     .done
+.cmp_gt:
+    cmp     r9, r10
+    setg    al
+    mov     [s3], al
+    jmp     .done
+.cmp_lt:
+    cmp     r9, r10
+    setl    al
+    mov     [s3], al
+    jmp     .done
+
+.no_such_column:
+    mov     byte [s3], 0
+    jmp     .done
+.no_such_field:
+    ; mov     rax, 1
+    ; call    writeNum
+    mov     byte [s3], 0
+    jmp     .done
+
+.done:
+    ; Restore registers
+    ; call    newLine
+    ; mov     al, [s3]
+    ; call    writeNum
+    ; mov     byte [s3], 1
+    ; call    newLine
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
+    ret
+
+strcpy_zero:
+    push    rax
+    push    rcx
+    xor     rcx,rcx
+.copy_loop:
+    mov     al, [rsi+rcx]
+    mov     [rdi+rcx], al
+    inc     rcx
+    cmp     al, 0
+    jne     .copy_loop
+    pop     rcx
+    pop     rax
+    ret
+
+
+
+; Helper: convert decimal string at RDI to integer in RAX
+str2int:
+    push    rbx
+    push    rcx
+    xor     rax, rax      ; accumulator = 0
+    xor     rbx, rbx      ; index = 0
+.conv_loop:
+    movzx   rcx, byte [rdi + rbx]  ; load next character
+    cmp     rcx, 0                 ; end of string?
+    je      .conv_done
+    sub     rcx, '0'               ; convert ASCII to numeric value
+    imul    rax, rax, 10           ; acc *= 10
+    add     rax, rcx               ; acc += digit
+    inc     rbx                     ; index++
+    jmp     .conv_loop
+.conv_done:
+    pop     rcx
+    pop     rbx
+    ret
+
+
+
+
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; Subroutine for comparing two strings in 's1' and 's2' reserved bytes.
 stringComparator:
     push        rax
@@ -913,7 +1600,7 @@ director_first_word_separated2:
     call        stringComparator
     cmp         byte [s3], 1
     jne         director_first_word_separated3
-    mov         byte [s4], 0
+    mov         byte [s10], 0
     jmp         director_done
 ; CHECKED ✅
 
@@ -964,10 +1651,35 @@ director_first_word_separated6:
     rep         movsb
     call        stringComparator
     cmp         byte [s3], 1
-    jne         director_first_word_separated6
+    jne         director_first_word_separated7
     call        insertIntoTable
     jmp         director_done
 
+; SELECT?
+director_first_word_separated7:
+    mov         rcx, 7
+    mov         rsi, SELECT
+    mov         rdi, s2
+    rep         movsb
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         director_first_word_separated8
+    call        selectCommandHandler
+    jmp         director_done
+
+; DELETE?
+director_first_word_separated8:
+    mov         rcx, 7
+    mov         rsi, DELETE
+    mov         rdi, s2
+    rep         movsb
+    call        stringComparator
+    cmp         byte [s3], 1
+    jne         director_first_word_raiseError
+    call        deleteFromTable
+    jmp         director_done
+
+; NONE
 director_first_word_raiseError:
     call        raiseError_badCommand
 
@@ -1187,15 +1899,35 @@ raiseError_badCommand:
     pop     rsi
     pop     rdi
     pop     rax
+    ret
+
+
+raiseError_fileNotFound:
+    push    rax
+    push    rdi
+    push    rsi
+    push    rdx
+
+    mov     rax, 1          ; sys_write
+    mov     rdi, 1          ; stdout
+    mov     rsi, fileNotExistsMsg
+    mov     rdx, fileNotExistsMsgLen
+    syscall
+
+    pop     rdx
+    pop     rsi
+    pop     rdi
+    pop     rax
+    ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
 
 
 _start:
-    mov         byte [s4], 1
+    mov         byte [s10], 1
 .app_loop:
-    cmp         byte [s4], 1
+    cmp         byte [s10], 1
     jne         Exit
 
     mov         rsi, dash
@@ -1204,9 +1936,6 @@ _start:
     ; <<TO GET ONE LINE OF COMMAND<<
     call        readOneLineCommand
     ; >>TO GET ONE LINE OF COMMAND>>
-
-    ; mov         rsi, command
-    ; call        printString
 
     ; <<TO PROCESS THE INPUTTED LINE OF COMMAND<<
     call        director
@@ -1219,9 +1948,6 @@ Exit:
     mov     rax, sys_exit
     xor     rdi, rdi
     syscall
-
-
-
 
 
 ;----------------------------------------------------
@@ -1252,6 +1978,7 @@ Exit:
     O_WRONLY     equ     0q000001
     O_RDWR       equ     0q000002
     O_CREAT      equ     0q000100
+    O_TRUNC      equ     0q01000
     O_APPEND     equ     0q002000
     BEG_FILE_POS equ     0
     CURR_POS     equ     1
