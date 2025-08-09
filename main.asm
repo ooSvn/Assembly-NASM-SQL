@@ -51,6 +51,7 @@ section .data
     noSuchColumnMsg     db "Error: no such column",10
     noSuchColumnMsgLen  equ $ - noSuchColumnMsg
     invalidColName      db "Error: invalid columns",10,0
+    numOfColsError      db "Error: invalid number of columns",10,0
     ; -----------------------------------------------------------------
     dot                 db  ".", 0
     pipe_char           db  '|'
@@ -289,7 +290,6 @@ createTable_createfile:
     call        closeFile  
     jmp         createTable_done
 
-; heree
 createTable_raiseError:
     mov         rsi, invalidColName
     call        printString
@@ -2172,7 +2172,7 @@ check_compatibilty:
 .skip_colname:
     mov     al, [rsi]
     cmp     al, 0
-    je      .success
+    je      .check_if_end_of_CONTENT
     cmp     al, ':'
     je      .got_type
     inc     rsi
@@ -2259,8 +2259,23 @@ check_compatibilty:
     syscall
     jmp     .done
 
+.check_if_end_of_CONTENT:
+    mov     al, [rdi]
+    cmp     al, 0
+    je      .done
+    cmp     al, NL
+    je      .done
+    jmp     .num_of_cols_error
+
 .success:
     mov     byte [s3], 1
+    jmp     .done
+
+.num_of_cols_error:
+    mov     byte [s3], 0
+    mov     rsi, numOfColsError
+    call    printString
+
 
 .done:
     pop     r9
