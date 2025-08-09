@@ -1,1 +1,0 @@
-CREATE TABLE company (name:str,age:int)

@@ -1,21 +1,4 @@
 section .data
-    pipe_char   db  '|'
-    tabs        db  '    '
-    tabs_len    equ $-tabs
-    comma       db ",",0
-    newline     db 10,0
-    src_file    db "srcfile.txt", 0
-    dst_file    db "dstfile.txt", 0
-    append_file db "dstfile.txt", 0
-    dir_name    db "testdir", 0
-    FDsrc       dq 0    ; file descriptor for source file
-    FDdst       dq 0    ; file descriptor for destination file
-    FDappend    dq 0    ; file descriptor for append file
-    write_data  db "Hello, Assembly!",0
-    write_data_len dq 16
-    append_data db "Appended text!"
-    append_data_len dq 14
-    dash        db '-',0
 
     error_create        db "error in creating file             ", NL, 0
     error_close         db "error in closing file              ", NL, 0
@@ -67,19 +50,32 @@ section .data
     fileNotFoundMsgLen  equ $ - fileNotFoundMsg
     noSuchColumnMsg     db "Error: no such column",10
     noSuchColumnMsgLen  equ $ - noSuchColumnMsg
+    invalidColName      db "Error: invalid columns",10,0
+    ; -----------------------------------------------------------------
     dot                 db  ".", 0
+    pipe_char           db  '|'
+    comma               db  ",",0
+    newline             db  10,0
+    src_file            db  "srcfile.txt", 0
+    FDdst               dq  0    ; file descriptor for destination file
+    dash                db  '-',0
     s11                 dq  15
     s12                 db  0
 
+
 section .bss
-    buf         resb    4096        ; read entire file into here
-    buf_pointer resq    1
+    FILE_NAME   resb    100
+    CONTENT     resb    1000
+    CONTENT_LEN resq    1
+    LINE        resb    1000
+    LINE_LEN    resq    1
     HEADER      resb    4096
     HEADER_LEN  resq    1
     COLUMNS     resb    1000  
     CONDITION   resb    1000  
-    buffer      resb    4096
-    command     resb    100          ;to store a line of command
+    command     resb    100
+    buf         resb    4096
+    buf_pointer resq    1
     s1          resb    100
     s2          resb    100
     s3          resb    1
@@ -91,11 +87,7 @@ section .bss
     s9          resb    100
     s10         resb    1
     ; -----------------------------------------------------------------
-    FILE_NAME   resb    100
-    CONTENT     resb    1000
-    CONTENT_LEN resq    1
-    LINE        resb    1000
-    LINE_LEN    resq    1
+
 
 %macro printR 1:
     push        rax
@@ -138,8 +130,6 @@ createTable:
     push        rdi
     push        rdx
     push        rcx
-    
-; here FILE_NAME and CONTENT and CONTENT_LEN should be extracted!
 
 ; === Skip until after "TABLE" ===
 createTable_skipToTable:
@@ -203,7 +193,7 @@ createTable_FileNameExtraction:
 ; === Extract content in parentheses to CONTENT ===
 createTable_ContentExtraction:
     lea     rsi, [command]
-
+    mov     rdx, 0
 .find_paren:
     mov     al, [rsi]
     cmp     al, '('
@@ -223,6 +213,10 @@ createTable_ContentExtraction:
     je      .done_content
     cmp     al, 0
     je      .done_content
+    cmp     al, ':'
+    jne     .go_on
+    mov     rdx, 1
+.go_on:
     mov     [rdi], al
     inc     rsi
     inc     rdi
@@ -231,9 +225,10 @@ createTable_ContentExtraction:
 .done_content:
     mov     byte [rdi], 10
     mov     byte [rdi + 1], 0      ; NUL‑terminate
+    cmp     rdx, 1
+    jne     createTable_raiseError
     jmp     createTable_ContentLenExtraction
-    ; mov     rsi, rdi
-    ; call    printString
+
 
 ; === Compute string length of CONTENT and save in CONTENT_LEN ===
 createTable_ContentLenExtraction:
@@ -292,6 +287,12 @@ createTable_createfile:
     call        writeFile                          ; Call writeFile to write data to dstfile.txt
     mov         rdi, [FDdst]                       ; Load file descriptor for closing
     call        closeFile  
+    jmp         createTable_done
+
+; heree
+createTable_raiseError:
+    mov         rsi, invalidColName
+    call        printString
 
 createTable_done:
     pop         rcx
@@ -478,9 +479,6 @@ showTables:
     jmp     .find_nul
 
 .got_len:
-    ; rsi → d_name
-    ; rcx = length of the name
-
     ; only proceed if rcx >= 4
     cmp     rcx, 4
     jb      .skip_print
@@ -558,11 +556,6 @@ describeTable:
     mov     byte [rdi + 3], 'l'
     mov     byte [rdi + 4], 0
 
-    ; (optional) echo filename for debug
-    ; lea   rsi, [FILE_NAME]
-    ; call  printString
-    ; call  newLine
-
     ;— 2. Open the file read-only ——
     mov     rax, sys_open
     lea     rdi, [rel FILE_NAME]
@@ -603,10 +596,6 @@ describeTable:
 .got_nl:
     mov     byte [buf + rbx], 0  ; NUL-terminate
 
-    ;— 5. Print it ——
-    ; lea     rsi, [rel buf]
-    ; call    printString
-    ; call    newLine
 
     ;— 6. Cleanup & return ——
     mov     rax, sys_close
@@ -686,8 +675,6 @@ insertIntoTable_skipINTO:
 
 
 
-
-
 insertIntoTable_getFileName:
     lea     rsi, [command + rdx + 5]
     mov     rdi, FILE_NAME
@@ -753,8 +740,6 @@ insertIntoTable_skipVALUES:
     jmp         .looop
 
 
-
-
 insertIntoTable_extractValues:
     lea     rsi, [command]
 
@@ -803,7 +788,6 @@ insertIntoTable_ContentLenExtraction:
 
 .store_len:
     mov     [CONTENT_LEN], rcx
-
 
 
 insertIntoTable_evaluateValues:
@@ -870,6 +854,7 @@ insertIntoTable_done:
     pop         rbx
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; ---------------------------------------------------------
 ; extract_header_columns
 ;   Read HEADER (newline-terminated) and produce COLUMNS
@@ -930,6 +915,7 @@ extract_header_columns:
     pop     rax
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 selectCommandHandler:
     push        rbx
     push        rsi
@@ -970,8 +956,6 @@ selectCommandHandler_extractColumns:
 
 ; here is assumed that * is inputted as columns
     mov         byte [s12], 1
-    ; mov         rax, [dot]
-    ; call        putc
     
 
 selectCommandHandler_skipFROM:
@@ -1075,14 +1059,11 @@ selectCommandHandler_extractCondition:
 .done:
     mov         byte[CONDITION + r13], 0
 
-
 condition_exists:
     mov         byte [s9], 1
     jmp         selectCommandHandler_display
 noCondition:
     mov         byte [s9], 0
-
-
 
 ; to display all info or with the mentioned condition.
 selectCommandHandler_display:
@@ -1130,9 +1111,6 @@ selectCommandHandler_display:
     cmp     byte [s12], 1
     jne     selectCommandHandler_display_header
     call    extract_header_columns
-    ; mov     rsi, COLUMNS
-    ; call    printString
-    ; call    newLine
 
 selectCommandHandler_display_header:
     lea     rsi, [COLUMNS]
@@ -1183,9 +1161,6 @@ selectCommandHandler_display_checkLine:
     jne     .nextLine
 
 .no_check_cond:
-    ; mov     rsi, COLUMNS
-    ; call    printString
-    ; call    newLine
     call    conditional_display
 
 .nextLine:
@@ -1315,8 +1290,6 @@ conditional_display:
     jmp     .find_header_loop
 
 .got_index:
-    ; mov     rax, rdx
-    ; call    writeNum
     mov     r11, rdx      ; save desired field index
 
     ; --- 2) extract that field from LINE into s7 ---
@@ -1437,7 +1410,6 @@ print_s7:
     pop     rax
     ret
 
-; dastoor
 ; SELECT name,age FROM students WHERE age>20
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
@@ -1576,9 +1548,6 @@ deleteFromTable_readFile:
     mov     rdi, [FDdst]
     call    closeFile
 
-    ; mov     rsi, buf
-    ; call    printString
-
 
 deleteFromTable_FirstLineOfFile:
     ; READ FIRST LINE OF FILE
@@ -1639,9 +1608,6 @@ deleteFromTable_checkRecords:
     inc     r14
     mov     [LINE_LEN], r14
 
-    ; mov     rax, r14
-    ; call    writeNum
-    ; call    newLine
     ; CALL ROUTINE FOR CHECKING THE RECORD
     call    check_condition
     cmp     byte [s3], 0
@@ -1658,8 +1624,6 @@ deleteFromTable_checkRecords:
     xor     r14, r14
     jmp     .copy_line
 .done:
-
-
     ; CLOSE FILE
 .close_file:
     mov     rax, 3            ; syscall: sys_close
@@ -1669,8 +1633,6 @@ deleteFromTable_checkRecords:
     jmp deleteFromTable_done
 
 
-
-
 deleteFromTable_raiseError:
     call        raiseError_badCommand
     jmp         deleteFromTable_done
@@ -1678,7 +1640,6 @@ deleteFromTable_raiseError:
 deleteFromTable_fileNotFound:
     call        raiseError_fileNotFound
     jmp         deleteFromTable_done
-
 
 deleteFromTable_done:
     pop         r12
@@ -1710,8 +1671,6 @@ check_condition:
     ; --- 1. Parse CONDITION into s5 (col), s4 (op), s6 (value) ---
     xor     rbx, rbx        ; offset in CONDITION
     lea     rsi, [rel CONDITION]
-    ; call    printString
-    ; call    newLine
     lea     rdi, [rel s5]
 .parse_cond:
     mov     al, [rsi+rbx]
@@ -1744,7 +1703,7 @@ check_condition:
 .val_done:
     mov     byte [s6+rcx], 0 ; terminate condition value
 
-        ; --- 2. Find column index by comparing s5 to HEADER names ---
+    ; --- 2. Find column index by comparing s5 to HEADER names ---
     xor     rcx, rcx         
     xor     rdx, rdx        ; field index
     lea     rsi, [rel HEADER]
@@ -1763,24 +1722,13 @@ check_condition:
 .hdr_type_sep:
     mov     byte [rdi+rbx], 0 ; terminate at ':'
 .compare_hdr:
-    ; push    rsi
-    ; lea     rsi, [s2]
-    ; call    printString
-    ; pop     rsi
     ; copy s5 into s1 for comparator
     push    rsi
     lea     rdi, [rel s1]
     mov     rsi, s5
     call    strcpy_zero
     pop     rsi
-    ; copy s2 into s2-buffer (already zero-terminated)
-    ; compare
-    ; push    rsi
-    ; lea     rsi, [s1]
-    ; call    printString
-    ; lea     rsi, [s2]
-    ; call    printString
-    ; pop     rsi
+    
     call    stringComparator
     cmp     byte [s3], 1
     je      .got_index
@@ -1804,15 +1752,6 @@ check_condition:
     ; no more headers
     jmp .done
 .got_index:
-    ; ; mov     [where_index], rcx  ; save matched index
-
-    ; mov     rsi, LINE
-    ; call    printString
-    ; call    newLine
-    ; mov     rax, rdx
-    ; call    writeNum
-    ; call    newLine
-
 
     ; --- 3. Extract corresponding field from LINE into s7 --- from LINE into s7 ---
     xor     rbx, rbx        ; row field index
@@ -1871,13 +1810,8 @@ check_condition:
     jnz     .find_type
     jmp     .find_type
 
-
-
-
 ;     ; --- 5. Evaluate condition ---
 .eval_cond:
-    ; mov     al, [s8]
-    ; call    putc
     cmp     byte [s8], 'i'
     je      .eval_int
     ; string compare for '=' only (string types)
@@ -1918,10 +1852,6 @@ check_condition:
     mov     [s3], al
     jmp     .done
 .cmp_gt:
-    ; printR  r9
-    ; call    newLine
-    ; printR  r10
-    ; call    newLine
     cmp     r9, r10
     setg    al
     mov     [s3], al
@@ -1947,7 +1877,8 @@ check_condition:
     pop     rbx
     pop     rax
     ret
-
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 strcpy_zero:
     push    rax
     push    rcx
@@ -1961,9 +1892,8 @@ strcpy_zero:
     pop     rcx
     pop     rax
     ret
-
-
-
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; Helper: convert decimal string at RDI to integer in RAX
 str2int:
     push    rbx
@@ -1985,15 +1915,12 @@ str2int:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-
 print_separator:
     push    rsi
     mov     rsi, SEPARATOR
     call    printString
     pop     rsi
     ret
-
-
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; Subroutine for comparing two strings in 's1' and 's2' reserved bytes.
@@ -2026,7 +1953,6 @@ stringComparator_done:
     pop         rbx
     pop         rax
     ret
-; CHECKED ✅
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 director:
@@ -2048,7 +1974,6 @@ director_while1:
     inc         r8
     jmp         director_while1
 
-; checking which command did the user enter?
 ; CREATE?
 director_first_word_separated1:
     mov         byte [s1+r8], 0
@@ -2061,7 +1986,6 @@ director_first_word_separated1:
     jne         director_first_word_separated2
     call        createTable
     jmp         director_done
-; CHECKED ✅
 
 ; QUIT?
 director_first_word_separated2:
@@ -2074,7 +1998,6 @@ director_first_word_separated2:
     jne         director_first_word_separated3
     mov         byte [s10], 0
     jmp         director_done
-; CHECKED ✅
 
 ; DROP?
 director_first_word_separated3:
@@ -2087,7 +2010,6 @@ director_first_word_separated3:
     jne         director_first_word_separated4
     call        dropTable
     jmp         director_done
-; CHECKED ✅
 
 ; SHOW TABLES?
 director_first_word_separated4:
@@ -2100,7 +2022,6 @@ director_first_word_separated4:
     jne         director_first_word_separated5
     call        showTables
     jmp         director_done
-; CHECKED ✅
 
 ; DESCRIBE?
 director_first_word_separated5:
@@ -2113,7 +2034,6 @@ director_first_word_separated5:
     jne         director_first_word_separated6
     call        describeTable
     jmp         director_done
-; CHECKED ✅
 
 ; INSERT?
 director_first_word_separated6:
@@ -2229,6 +2149,7 @@ checkIf_s5_isStr:
 
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; to check whether the inputted VALUES match the types set in the file.
 check_compatibilty:
     push    rsi
     push    rdi
@@ -2331,7 +2252,6 @@ check_compatibilty:
 
 .fail:
     mov     byte [s3], 0
-    ; Print error message
     mov     rax, 1          ; sys_write
     mov     rdi, 1          ; stdout
     mov     rsi, typeMismatchMsg
@@ -2393,7 +2313,6 @@ raiseError_fileNotFound:
     ret
 
 
-
 raiseError_noSuchColumn:
     push    rax
     push    rdi
@@ -2447,8 +2366,7 @@ reset_storage:
     mov         byte [HEADER], 0
     mov         byte [HEADER_LEN], 0
     mov         byte [COLUMNS], 0  
-    mov         byte [CONDITION], 0 
-    mov         byte [buffer], 0
+    mov         byte [CONDITION], 0
     mov         byte [command], 0
     mov         byte [s1], 0
     mov         byte [s2], 0
@@ -2486,9 +2404,7 @@ _start:
     ; >>TO PROCESS THE INPUTTED LINE OF COMMAND>>
     call        newLine
 
-    jmp         .app_loop
-
-    
+    jmp         .app_loop    
 
 Exit:
     mov     rax, sys_exit
@@ -2539,7 +2455,6 @@ Exit:
     sys_IROTH    equ     0q004
     NL           equ     0xA
     Space        equ     0x20
-    bufferlen    equ     99999
 %endif
 
 %ifndef NOWZARI_IN_OUT
@@ -2699,37 +2614,9 @@ createFile:
     syscall
     cmp     rax, -1
     jle     createerror
-    ; mov     rsi, suces_create
-    ; call    printString
     ret
 createerror:
     mov     rsi, error_create
-    call    printString
-    ret
-openFile:
-    mov     rax, sys_open
-    mov     rsi, O_RDWR
-    syscall
-    cmp     rax, -1
-    jle     openerror
-    ; mov     rsi, suces_open
-    ; call    printString
-    ret
-openerror:
-    mov     rsi, error_open
-    call    printString
-    ret
-appendFile:
-    mov     rax, sys_open
-    mov     rsi, O_RDWR | O_APPEND
-    syscall
-    cmp     rax, -1
-    jle     appenderror
-    mov     rsi, suces_append
-    call    printString
-    ret
-appenderror:
-    mov     rsi, error_append
     call    printString
     ret
 writeFile:
@@ -2737,8 +2624,6 @@ writeFile:
     syscall
     cmp     rax, -1
     jle     writeerror
-    ; mov     rsi, suces_write
-    ; call    printString
     ret
 writeerror:
     mov     rsi, error_write
@@ -2764,38 +2649,11 @@ closeFile:
     syscall
     cmp     rax, -1
     jle     closeerror
-    ; mov     rsi, suces_close
-    ; call    printString
     ret
 closeerror:
     mov     rsi, error_close
     call    printString
     ret
-deleteFile:
-    mov     rax, sys_unlink
-    syscall
-    cmp     rax, -1
-    jle     deleterror
-    mov     rsi, suces_delete
-    call    printString
-    ret
-deleterror:
-    mov     rsi, error_delete
-    call    printString
-    ret
-seekFile:
-    mov     rax, sys_lseek
-    syscall
-    cmp     rax, -1
-    jle     seekerror
-    mov     rsi, suces_seek
-    call    printString
-    ret
-seekerror:
-    mov     rsi, error_seek
-    call    printString
-    ret
-
 
 
 ; To RUN the code:
