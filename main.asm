@@ -3,25 +3,10 @@ section .data
     error_create        db "error in creating file             ", NL, 0
     error_close         db "error in closing file              ", NL, 0
     error_write         db "error in writing file              ", NL, 0
-    error_open          db "error in opening file              ", NL, 0
-    error_open_dir      db "error in opening dir               ", NL, 0
-    error_append        db "error in appending file            ", NL, 0
-    error_delete        db "error in deleting file             ", NL, 0
     error_read          db "error in reading file              ", NL, 0
     error_print         db "error in printing file             ", NL, 0
-    error_seek          db "error in seeking file              ", NL, 0
-    error_create_dir    db "error in creating directory        ", NL, 0
 
-    suces_create        db "file created and opened for R/W    ", NL, 0
-    suces_create_dir    db "dir created and opened for R/W     ", NL, 0
-    suces_close         db "file closed                        ", NL, 0
-    suces_write         db "written to file                    ", NL, 0
-    suces_open          db "file opened for R/W                ", NL, 0
-    suces_open_dir      db "dir opened for R/W                 ", NL, 0
-    suces_append        db "file opened for appending          ", NL, 0
-    suces_delete        db "file deleted                       ", NL, 0
     suces_read          db "reading file                       ", NL, 0
-    suces_seek          db "seeking file                       ", NL, 0
     ; -----------------------------------------------------------------
     SEPARATOR           db "==================================================",NL,0
     CREATE              db "CREATE",0
@@ -65,29 +50,30 @@ section .data
 
 
 section .bss
-    FILE_NAME   resb    100
-    CONTENT     resb    1000
+    FILE_NAME   resb    100         ; To store the name of the file
+    CONTENT     resb    1000        ; To store the content of a command
     CONTENT_LEN resq    1
-    LINE        resb    1000
+    LINE        resb    1000        ; To store a line of the content read from file
     LINE_LEN    resq    1
-    HEADER      resb    4096
+    HEADER      resb    4096        ; To store the header of the file.
     HEADER_LEN  resq    1
-    COLUMNS     resb    1000  
-    CONDITION   resb    1000  
-    command     resb    100
-    buf         resb    4096
+    COLUMNS     resb    1000        ; To store the columns of a table
+    CONDITION   resb    1000        ; To store the condition been inputted from command
+    command     resb    100         ; To store the whole inputted command 
+    buf         resb    4096        ; a buffer to store the whole content of file
     buf_pointer resq    1
-    s1          resb    100
-    s2          resb    100
+    ; -----------------------------------------------------------------
+    ; Some helper storages
+    s1          resb    1000
+    s2          resb    1000
     s3          resb    1
     s4          resb    1
     s5          resb    1000
-    s6          resb    100
-    s7          resb    100
-    s8          resb    100   
-    s9          resb    100
+    s6          resb    1000
+    s7          resb    1000
+    s8          resb    1000  
+    s9          resb    1000
     s10         resb    1
-    ; -----------------------------------------------------------------
 
 
 %macro printR 1:
@@ -109,13 +95,13 @@ readOneLineCommand:
     push        r8
     xor         r8, r8
 
-readOneLineCommand_while1:
+readOneLineCommand_loop:
     call        getc
     cmp         al, NL
     je          readOneLineCommand_done
     mov         [command + r8], al
     inc         r8
-    jmp         readOneLineCommand_while1
+    jmp         readOneLineCommand_loop
 
 readOneLineCommand_done:
     mov         byte [command + r8], 0
@@ -124,7 +110,7 @@ readOneLineCommand_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-; CREATE TABLE <table_name> (col1:str,col2:int)
+; Parsing and doing commands like: CREATE TABLE <table_name> (col1:str,col2:int)
 createTable:
     push        rax
     push        rsi
@@ -303,6 +289,7 @@ createTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Parsing and doing commands like: DROP TABLE <table_name>
 dropTable:
     push        rax
     push        rsi
@@ -394,35 +381,7 @@ dropTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-hasTblExtension:
-    push rdi
-    push rcx
-    push rdx
-
-    mov rdi, rsi       ; RDI = string ptr
-    call GetStrlen     ; RDX = strlen
-    cmp rdx, 4
-    jb .no
-
-    ; point to last 4 chars
-    lea rsi, [rsi + rdx - 4]
-    mov eax, dword [rsi]
-    cmp eax, 0x6C62742E ; ".tbl" = 0x6C ('l'), 0x62 ('b'), 0x74 ('t'), 0x2E ('.') little-endian
-    jne .no
-    mov rax, 1
-    jmp .done
-
-.no:
-    xor rax, rax
-
-.done:
-    pop rdx
-    pop rcx
-    pop rdi
-    ret
-
-
-
+; Parsing and doing command: SHOW TABLES
 showTables:
     push rbx
     push rsi
@@ -526,6 +485,7 @@ showTables:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Parsing and doing commands like: DESCRIBE <table_name>
 describeTable:
     push    rbx
     push    rsi
@@ -639,6 +599,7 @@ describeTable:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Parsing and doing commands like: INSERT INTO <table_name> VALUES (val_1,val_2,...)
 insertIntoTable:
     push        rbx
     push        rsi
@@ -855,15 +816,7 @@ insertIntoTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-; ---------------------------------------------------------
-; extract_header_columns
-;   Read HEADER (newline-terminated) and produce COLUMNS
-;   containing "name,age,..." (no ":type" parts).
-;
-; Inputs: HEADER (rel), NL constant
-; Outputs: COLUMNS (rel) NUL-terminated: "name,age" (no trailing comma)
-; Preserves registers listed (push/pop).
-; ---------------------------------------------------------
+; header of the file (col1:type1,col2:type2,...) to (col1,col2,...) and save into COLUMNS
 extract_header_columns:
     ; save registers (one per line as you requested)
     push    rax
@@ -916,6 +869,11 @@ extract_header_columns:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Parsing and handling commands like: 
+; SELECT * FROM <table_name>
+; SELECT * FROM <table_name> WHERE <condition>
+; SELECT col1,col2,... FROM <table_name> WHERE <condition>
+; (noting that <condition> could limit the records over just one column like: age>10)
 selectCommandHandler:
     push        rbx
     push        rsi
@@ -1190,11 +1148,8 @@ selectCommandHandler_done:
     pop         rbx
     ret
 
-
-
-
 ;------------------------------------------------------------------------------
-; .conditional_display
+; conditional_display
 ;
 ; For each name in COLUMNS:
 ;   1) find its field index by walking HEADER (split on “,” and “:”)
@@ -1252,8 +1207,6 @@ conditional_display:
     cmp     byte [rsi], ','
     jne     .find_index_start
     inc     rsi
-
-
 
 
 .find_index_start:
@@ -1361,6 +1314,7 @@ conditional_display:
     ret
 
 
+; Helper function for printing what's in s7 in an organised and clean box (the size of box is stored in s11)
 print_s7:
     push    rax
     push    r14
@@ -1409,10 +1363,10 @@ print_s7:
     pop     r14
     pop     rax
     ret
-
-; SELECT name,age FROM students WHERE age>20
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Parsing and handling commands like: DELETE FROM <table_name> WHERE <condition>
+; <condition> could be same as it was in SELECT command.
 deleteFromTable:
     push        rbx
     push        rsi
@@ -1654,11 +1608,7 @@ deleteFromTable_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-; INSERT INTO students VALUES ("amir",32)
-; INSERT INTO students VALUES ("ali",24)
-; INSERT INTO students VALUES ("babi",38)
-; DELETE FROM students WHERE age<30
-
+; Checking if the the CONDITION holds for the record available in LINE
 check_condition:
     ; Save registers
     push    rax
@@ -1879,6 +1829,7 @@ check_condition:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Copying content starting from rsi into rdi until reaching zero-temination
 strcpy_zero:
     push    rax
     push    rcx
@@ -1898,15 +1849,15 @@ strcpy_zero:
 str2int:
     push    rbx
     push    rcx
-    xor     rax, rax      ; accumulator = 0
-    xor     rbx, rbx      ; index = 0
+    xor     rax, rax                ; accumulator = 0
+    xor     rbx, rbx                ; index = 0
 .conv_loop:
-    movzx   rcx, byte [rdi + rbx]  ; load next character
-    cmp     rcx, 0                 ; end of string?
+    movzx   rcx, byte [rdi + rbx]   ; load next character
+    cmp     rcx, 0                  ; end of string?
     je      .conv_done
-    sub     rcx, '0'               ; convert ASCII to numeric value
-    imul    rax, rax, 10           ; acc *= 10
-    add     rax, rcx               ; acc += digit
+    sub     rcx, '0'                ; convert ASCII to numeric value
+    imul    rax, rax, 10            ; acc *= 10
+    add     rax, rcx                ; acc += digit
     inc     rbx                     ; index++
     jmp     .conv_loop
 .conv_done:
@@ -1915,6 +1866,7 @@ str2int:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; Helper
 print_separator:
     push    rsi
     mov     rsi, SEPARATOR
@@ -1955,6 +1907,7 @@ stringComparator_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; The director function of the program which passes the command based on their first word
 director:
     push        r8
     push        rbx
@@ -2084,6 +2037,7 @@ director_done:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; helper
 checkIf_s5_isInt:
     push        r8
 
@@ -2114,6 +2068,7 @@ checkIf_s5_isInt:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; helper
 checkIf_s5_isStr:
     push        r8
 
@@ -2146,10 +2101,9 @@ checkIf_s5_isStr:
 .done:
     pop         r8
     ret
-
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-; to check whether the inputted VALUES match the types set in the file.
+; to check whether the inputted VALUES match the types set in the file. (and 
 check_compatibilty:
     push    rsi
     push    rdi
@@ -2286,8 +2240,6 @@ check_compatibilty:
     pop     rdi
     pop     rsi
     ret
-
-
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 raiseError_badCommand:
@@ -2296,8 +2248,8 @@ raiseError_badCommand:
     push    rsi
     push    rdx
 
-    mov     rax, 1          ; sys_write
-    mov     rdi, 1          ; stdout
+    mov     rax, 1
+    mov     rdi, 1
     mov     rsi, smthWrongMsg
     mov     rdx, smthWrongMsgLen
     syscall
@@ -2315,8 +2267,8 @@ raiseError_fileNotFound:
     push    rsi
     push    rdx
 
-    mov     rax, 1          ; sys_write
-    mov     rdi, 1          ; stdout
+    mov     rax, 1          
+    mov     rdi, 1
     mov     rsi, fileNotExistsMsg
     mov     rdx, fileNotExistsMsgLen
     syscall
@@ -2334,8 +2286,8 @@ raiseError_noSuchColumn:
     push    rsi
     push    rdx
 
-    mov     rax, 1          ; sys_write
-    mov     rdi, 1          ; stdout
+    mov     rax, 1
+    mov     rdi, 1
     mov     rsi, noSuchColumnMsg
     mov     rdx, noSuchColumnMsgLen
     syscall
@@ -2347,6 +2299,7 @@ raiseError_noSuchColumn:
     ret
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+; helper
 check_file_existance:
     push    rax
     push    rdi
@@ -2374,7 +2327,7 @@ check_file_existance:
 ; <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 reset_storage:
     lea         rdi, [rel buf]       ; buffer start
-    mov         rcx, 4096        ; size in bytes
+    mov         rcx, 4096            ; size in bytes
     xor         rax, rax
     rep         stosb
     mov         byte [buf_pointer], 0
@@ -2400,6 +2353,9 @@ reset_storage:
     mov         byte [LINE_LEN], 0
     ret
 
+
+
+
 _start:
     mov         byte [s10], 1
 .app_loop:
@@ -2410,13 +2366,8 @@ _start:
     mov         rsi, dash
     call        printString
 
-    ; <<TO GET ONE LINE OF COMMAND<<
     call        readOneLineCommand
-    ; >>TO GET ONE LINE OF COMMAND>>
-
-    ; <<TO PROCESS THE INPUTTED LINE OF COMMAND<<
     call        director
-    ; >>TO PROCESS THE INPUTTED LINE OF COMMAND>>
     call        newLine
 
     jmp         .app_loop    
@@ -2425,11 +2376,6 @@ Exit:
     mov     rax, sys_exit
     xor     rdi, rdi
     syscall
-
-
-
-
-
 
 ;----------------------------------------------------
 ; Helper functions and macros (same as provided files)
